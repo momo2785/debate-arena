@@ -14,7 +14,6 @@ const css = `
 @media (max-width: 980px){ .mainGrid{ grid-template-columns: 1fr; } }
 
 /* controls */
-.controls{ display:grid; grid-template-columns:1fr auto; gap:12px; margin-top:12px; }
 .input{ padding:12px 14px; border-radius:10px; background:#ffffff14; border:1px solid #ffffff22; color:var(--ink); }
 .rounds{ width:80px; }
 .btns{ display:flex; gap:8px; margin-top:14px; flex-wrap:wrap; }
@@ -52,7 +51,6 @@ const css = `
 .fig3d__sheen{ position:absolute; inset:0; pointer-events:none; mix-blend-mode:screen; background:radial-gradient(120% 100% at 30% 0%,#ffffff12,transparent 55%); transform:translateZ(40px); }
 .pedestal{ position:absolute; left:50%; bottom:18px; translate:-50% 0; width:120px; height:12px; border-radius:999px;
   background:radial-gradient(120% 120% at 50% 30%,#000,#0a0f24); box-shadow:0 18px 30px #0009 inset,0 8px 30px #0008; transform:translateZ(10px); }
-.pedestal:before{ content:""; position:absolute; inset:-4px; border-radius:999px; background:radial-gradient(120% 120% at 50% 20%,currentColor,transparent 60%); filter:blur(10px); opacity:.55; }
 
 /* debug + dock */
 .debug{ position:sticky; top:0; z-index:40; margin-bottom:8px; padding:8px 12px; border-radius:10px; border:1px solid #ffffff22; background:#111827aa; backdrop-filter:blur(6px); font-size:12px; }
@@ -115,7 +113,7 @@ async function* startDebateStream(topic: string, rounds: number, onStatus?: (s:s
   }
 }
 
-/* ===================== TTS (singleton + chunked) ===================== */
+/* ===================== TTS ===================== */
 function getSharedAudio(): HTMLAudioElement {
   // @ts-ignore
   if (!window.__debateAudio) {
@@ -142,7 +140,6 @@ async function primeAutoplay() {
   } catch {}
 }
 
-// ~150 wpm ≈ 2.5 wps
 function getEstimatedSpeechSeconds(text: string) {
   const words = (text.match(/\b\w+\b/g) || []).length;
   return Math.max(8, Math.min(110, Math.round(words / 2.5)));
@@ -229,7 +226,7 @@ function FigurineCard({
       <div className="fig3d__img" style={{ position: "absolute", inset: 0 }}>
         <Image
           src={src}
-          alt={alt}
+          alt={`${alt}`}
           fill
           sizes="160px"
           style={{ objectFit: "contain" }}
@@ -242,7 +239,7 @@ function FigurineCard({
   );
 }
 
-/* ===================== Queue Monitor (admin-only helper) ===================== */
+/* ===================== Queue Monitor (admin helper) ===================== */
 function QueueMonitor({
   onPick,
   onStart,
@@ -250,18 +247,11 @@ function QueueMonitor({
   onPick: (q: string) => void;
   onStart?: () => void;
 }) {
-  type Item = { id?: string; text?: string; question?: string; at?: number; ts?: number };
-  const [items, setItems] = useState<Item[]>([]);
+  const [items, setItems] = useState<{ id?: string; text?: string; question?: string; ts?: number }[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const getText = (it: Item) => (it?.question ?? it?.text ?? "").trim();
-  const getWhen = (it: Item) => {
-    const t = (it.at ?? it.ts ?? 0) as number;
-    if (!t) return "";
-    const d = new Date(t);
-    return d.toLocaleString();
-  };
+  const getText = (it: any) => it?.question ?? it?.text ?? "";
 
   async function refresh() {
     try {
@@ -278,7 +268,29 @@ function QueueMonitor({
     }
   }
 
-  async function deleteItem(it: Item) {
+  async function pickRandomConsume() {
+    try {
+      setLoading(true);
+      const r = await fetch("/api/questions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "pick" }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const j = await r.json();
+      const picked = j?.picked;
+      if (picked) {
+        onPick(picked);
+        if (onStart) onStart();
+      }
+      await refresh();
+    } catch (e: any) {
+      setError(e?.message || "Pick failed");
+      setLoading(false);
+    }
+  }
+
+  async function removeItem(it: any) {
     try {
       setLoading(true);
       const r = await fetch("/api/questions", {
@@ -289,29 +301,7 @@ function QueueMonitor({
       if (!r.ok) throw new Error(await r.text());
       await refresh();
     } catch (e: any) {
-      setError(e?.message || "Delete failed");
-      setLoading(false);
-    }
-  }
-
-  async function pickRandomConsume() {
-    try {
-      setLoading(true);
-      const r = await fetch("/api/questions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "pick" }),
-      });
-      if (!r.ok) throw new Error(await r.text());
-      const j = await r.json(); // { picked, remaining }
-      const picked = j?.picked;
-      if (picked) {
-        onPick(picked);
-        if (onStart) onStart();
-      }
-      await refresh();
-    } catch (e: any) {
-      setError(e?.message || "Pick failed");
+      setError(e?.message || "Remove failed");
       setLoading(false);
     }
   }
@@ -340,18 +330,14 @@ function QueueMonitor({
         {items.map((it, idx) => (
           <div key={it.id ?? idx} style={{ border: "1px solid #ffffff22", borderRadius: 10, padding: 10, background: "#0b102c" }}>
             <div style={{ fontSize: 14, lineHeight: 1.4 }}>{getText(it)}</div>
-            <div style={{ fontSize: 12, opacity: .75, marginTop: 4 }}>
-              {it.id ? <>id: <code>{it.id}</code> • </> : null}
-              {getWhen(it)}
-            </div>
-            <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
               <button className="btn secondary" onClick={() => onPick(getText(it))}>Use as Topic</button>
               {onStart && (
                 <button className="btn primary" onClick={() => { onPick(getText(it)); onStart(); }}>
                   Use + Start
                 </button>
               )}
-              <button className="btn secondary" onClick={() => deleteItem(it)}>Delete</button>
+              <button className="btn secondary" onClick={() => removeItem(it)}>Remove</button>
             </div>
           </div>
         ))}
@@ -377,23 +363,19 @@ export default function AdminPanel(){
   const [dbgTTS, setDbgTTS] = useState("-");
   const [dbgErr, setDbgErr] = useState("-");
 
-  // Judge state
   const [judgement, setJudgement] = useState<JudgeResult | null>(null);
 
-  // Question Dock state
   const [queueCount, setQueueCount] = useState(0);
   const [qText, setQText] = useState("");
   const [qMsg, setQMsg] = useState<string | null>(null);
   const [autoRun, setAutoRun] = useState(false);
 
-  // countdown ticker
   useEffect(()=>{
     if (secondsLeft===null) return;
     const id = setInterval(()=> setSecondsLeft(s => (s===null? s : Math.max(0, s-1))), 1000);
     return ()=>clearInterval(id);
   },[secondsLeft]);
 
-  // poll queue size lightly
   useEffect(()=>{
     let stop = false;
     async function poll(){
@@ -408,7 +390,6 @@ export default function AdminPanel(){
     return ()=>{ stop = true; };
   },[]);
 
-  // Auto-run when idle
   useEffect(()=>{
     let tid: any;
     async function maybeAuto(){
@@ -452,12 +433,11 @@ export default function AdminPanel(){
       setQMsg("Added to queue!");
       setQText("");
       setQueueCount((c)=>c+1);
-    }catch(e:any){
+    }catch{
       setQMsg("Could not submit question.");
     }
   }
 
-  // --- Moderator judges & announces winner ---
   async function judgeAndAnnounce(finalTranscript: string) {
     try {
       const res = await fetch("/api/judge", {
@@ -489,14 +469,13 @@ export default function AdminPanel(){
 
   async function run(){
     if (running) return;
-    await primeAutoplay(); // Safari autoplay allowance
+    await primeAutoplay();
     setRunning(true);
     setJudgement(null);
     setLog([`[MOD] Debate start — Topic: ${topic}. — ${rounds} rounds.`]);
     setDbgStream("connecting"); setDbgErr("-"); setDbgTTS("-");
 
     try {
-      // 10s pre-roll
       setCurrent("MOD"); setTextMOD("Preparing debate…"); setSecondsLeft(10);
       await wait(10000); setSecondsLeft(null);
 
@@ -532,7 +511,6 @@ export default function AdminPanel(){
         }
       }
 
-      // After the stream ends, have MOD judge & announce the winner
       await judgeAndAnnounce(log.join("\n"));
 
     } catch (e:any) {
@@ -558,45 +536,48 @@ export default function AdminPanel(){
           <button className="btn secondary" onClick={()=>primeAutoplay()}>Prime Autoplay</button>
         </div>
 
-        <h1 style={{fontSize:28, fontWeight:900}}>$VS — Admin Panel</h1>
-        <p style={{opacity:.85}}>Control the debate • manage queue • auto-run • judging.</p>
+        <h1 style={{fontSize:28, fontWeight:900}}>$VS — Debate Arena (Admin)</h1>
+        <p style={{opacity:.85}}>Queue tools • moderation filter • random pick • auto-run • judging.</p>
 
         <div className="mainGrid">
           {/* -------- Question Dock -------- */}
           <aside className="dock">
-            <h3>Manual Controls</h3>
-            <small>Submit a motion/question directly. Public submissions appear below in Queue Monitor.</small>
-            <div className="row">
+            <h3>Question Dock</h3>
+            <small>Submit a motion/question to add to the queue. Unsafe content is auto-blocked.</small>
+            <div className="row" style={{display:"flex", gap:8, marginTop:10}}>
               <input
                 className="input qinput"
                 value={qText}
                 onChange={(e)=>setQText(e.target.value)}
-                placeholder="Type a topic (8–400 chars)"
+                placeholder="e.g., Should crypto be regulated like banks?"
                 maxLength={400}
               />
               <button className="btn primary" onClick={submitQuestion}>Submit</button>
             </div>
             {qMsg && <div className="muted">{qMsg}</div>}
 
-            <div className="row" style={{marginTop:10}}>
-              <button className="btn secondary" onClick={async()=>{
-                const r = await fetch("/api/questions", {
-                  method:"POST", headers:{"Content-Type":"application/json"},
-                  body: JSON.stringify({ action:"pick" })
-                });
-                if (r.ok) {
-                  const j = await r.json();
-                  if (j?.picked) { setTopic(j.picked); }
-                  setQueueCount(j?.remaining ?? queueCount);
-                }
-              }}>
+            <div className="row" style={{marginTop:10, display:"flex", gap:8}}>
+              <button
+                className="btn secondary"
+                onClick={async()=>{
+                  const r = await fetch("/api/questions", {
+                    method:"POST", headers:{"Content-Type":"application/json"},
+                    body: JSON.stringify({ action:"pick" })
+                  });
+                  if (r.ok) {
+                    const j = await r.json();
+                    if (j?.picked) { setTopic(j.picked); }
+                    setQueueCount(j?.remaining ?? queueCount);
+                  }
+                }}
+              >
                 Pick Random
               </button>
               <button className="btn primary" onClick={run} disabled={running}>Start</button>
             </div>
 
             <div className="muted" style={{marginTop:8}}>
-              Queue size (approx): <b>{queueCount}</b>
+              Queue size: <b>{queueCount}</b>
             </div>
 
             <div className="muted" style={{marginTop:8, display:"flex", alignItems:"center", gap:8}}>
@@ -619,7 +600,6 @@ export default function AdminPanel(){
               </div>
             </div>
 
-            {/* Live queue panel */}
             <QueueMonitor
               onPick={(q) => { setTopic(q); }}
               onStart={() => { setTimeout(() => run(), 200); }}
@@ -636,7 +616,7 @@ export default function AdminPanel(){
             <div className="grid">
               <Podium label="PRO" color="var(--pro)" speaking={current==="PRO"} secondsLeft={current==="PRO"?secondsLeft:null} text={textPRO} />
               <Podium label="MOD" color="var(--mod)" speaking={current==="MOD"} secondsLeft={current==="MOD"?secondsLeft:null} text={textMOD} />
-              <Podium label="CON" color="var(--con)" speaking={current==="CON"} secondsLeft={current==="CON"?secondsLeft:null} text={textCON} />
+              <Podium label="CON" color="var(--con)" speaking={current==="CON"} secondsLeft={current==="CON}?secondsLeft:null} text={textCON} />
             </div>
 
             <div style={{marginTop:22}}>
@@ -703,7 +683,7 @@ function Podium({
       <div className={rowClass} style={{ width: "100%" }}>
         <FigurineCard src={imgSrc} alt={`${label} character`} speaking={speaking} color={color} />
         <div className={bubbleClass} style={{ flex: 1, maxWidth: 280 }}>
-          {text ? <span style={{opacity:.95}}>{text}</span> : <span style={{opacity:.6'}}>…waiting…</span>}
+          {text ? <span style={{opacity:.95}}>{text}</span> : <span style={{opacity:.6}}>…waiting…</span>}
         </div>
       </div>
       <div className="timer">
