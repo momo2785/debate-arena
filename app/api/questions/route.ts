@@ -4,7 +4,6 @@ type Q = { id: string; text: string; at: number };
 const QUEUE: Q[] = []; // in-memory (clears on server restart)
 
 function badWordHeuristic(s: string) {
-  // quick prefilter (in addition to OpenAI moderation)
   const banned = [
     /\bkill|murder|assassinate|suicide|bomb\b/i,
     /\bslur\b/i,
@@ -42,7 +41,26 @@ export async function GET() {
 export async function POST(req: Request) {
   try {
     const body = await req.json().catch(() => ({}));
-    const action = body?.action;
+    const action: string | undefined = body?.action;
+
+    // ---- NEW: delete/remove a specific question from the queue ----
+    if (action === "remove") {
+      const { id, text } = body as { id?: string; text?: string };
+
+      let removed = false;
+      if (id) {
+        const i = QUEUE.findIndex((q) => q.id === id);
+        if (i >= 0) { QUEUE.splice(i, 1); removed = true; }
+      } else if (text) {
+        const i = QUEUE.findIndex((q) => q.text === text);
+        if (i >= 0) { QUEUE.splice(i, 1); removed = true; }
+      }
+
+      return NextResponse.json({
+        ok: removed,
+        remaining: QUEUE.length,
+      });
+    }
 
     // Random pick & pop
     if (action === "pick") {
@@ -52,6 +70,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ picked: q.text, remaining: QUEUE.length });
     }
 
+    // Otherwise treat as "submit"
     const text = String(body?.text || "").trim();
     if (!text || text.length < 8) {
       return NextResponse.json({ error: "Question too short." }, { status: 400 });
