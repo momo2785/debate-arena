@@ -243,6 +243,96 @@ function FigurineCard({
   );
 }
 
+/* ===================== Queue Monitor (admin-only helper) ===================== */
+function QueueMonitor({
+  onPick,
+  onStart,
+}: {
+  onPick: (q: string) => void;
+  onStart?: () => void;
+}) {
+  const [items, setItems] = useState<{ id?: string; text?: string; question?: string; ts?: number }[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const getText = (it: any) => it?.question ?? it?.text ?? "";
+
+  async function refresh() {
+    try {
+      setLoading(true);
+      setError(null);
+      const r = await fetch("/api/questions", { cache: "no-store" });
+      if (!r.ok) throw new Error(await r.text());
+      const j = await r.json();
+      setItems(Array.isArray(j?.items) ? j.items : []);
+    } catch (e: any) {
+      setError(e?.message || "Failed to load queue");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function pickRandomConsume() {
+    try {
+      setLoading(true);
+      const r = await fetch("/api/questions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "pick" }),
+      });
+      if (!r.ok) throw new Error(await r.text());
+      const j = await r.json(); // { picked, remaining }
+      const picked = j?.picked;
+      if (picked) {
+        onPick(picked);
+        if (onStart) onStart();
+      }
+      await refresh();
+    } catch (e: any) {
+      setError(e?.message || "Pick failed");
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    refresh();
+    const id = setInterval(refresh, 3000);
+    return () => clearInterval(id);
+  }, []);
+
+  return (
+    <div style={{ marginTop: 12, border: "1px solid #ffffff22", borderRadius: 12, padding: 12, background: "#0b102c" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <div style={{ fontWeight: 800 }}>Queue Monitor</div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btn secondary" onClick={refresh} disabled={loading}>Refresh</button>
+          <button className="btn primary" onClick={pickRandomConsume} disabled={loading}>Pick Random (consume)</button>
+        </div>
+      </div>
+      <div style={{ fontSize: 12, opacity: .8, marginTop: 6 }}>
+        Live items: <b>{items.length}</b> {loading ? " • loading…" : ""} {error ? ` • ${error}` : ""}
+      </div>
+
+      <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+        {items.length === 0 && <div style={{ opacity: .7 }}>No pending questions.</div>}
+        {items.map((it, idx) => (
+          <div key={it.id ?? idx} style={{ border: "1px solid #ffffff22", borderRadius: 10, padding: 10, background: "#0b102c" }}>
+            <div style={{ fontSize: 14, lineHeight: 1.4 }}>{getText(it)}</div>
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <button className="btn secondary" onClick={() => onPick(getText(it))}>Use as Topic</button>
+              {onStart && (
+                <button className="btn primary" onClick={() => { onPick(getText(it)); onStart(); }}>
+                  Use + Start
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /* ===================== Page ===================== */
 export default function Page(){
   const [topic, setTopic] = useState("Should we colonize Mars?");
@@ -294,7 +384,6 @@ export default function Page(){
     let tid: any;
     async function maybeAuto(){
       if (!autoRun || running) return;
-      // pick a random question from queue
       try {
         const r = await fetch("/api/questions", {
           method: "POST",
@@ -305,13 +394,11 @@ export default function Page(){
           const j = await r.json();
           if (j?.picked) {
             setTopic(j.picked);
-            // tiny delay so UI updates topic before run()
             setTimeout(()=>run(), 200);
           }
         }
       } catch {}
     }
-    // check every ~8s when idle
     tid = setInterval(maybeAuto, 8000);
     return ()=>clearInterval(tid);
   },[autoRun, running]);
@@ -505,6 +592,11 @@ export default function Page(){
                 </div>
               </div>
             </div>
+
+            <QueueMonitor
+              onPick={(q) => { setTopic(q); }}
+              onStart={() => { setTimeout(() => run(), 200); }}
+            />
           </aside>
 
           {/* -------- Debate Stage + Transcript -------- */}
@@ -522,8 +614,21 @@ export default function Page(){
 
             <div style={{marginTop:22}}>
               <h2 style={{fontSize:18, fontWeight:800}}>Transcript</h2>
-              <textarea readOnly value={log.join("\n")}
-                style={{marginTop:8, width:"100%", height:220, background:"#0b102c", border:"1px solid var(--line)", borderRadius:12, color:"#var(--ink)", padding:12, fontFamily:"ui-monospace, SFMono-Regular, Menlo, Monaco"}} />
+              <textarea
+                readOnly
+                value={log.join("\n")}
+                style={{
+                  marginTop:8,
+                  width:"100%",
+                  height:220,
+                  background:"#0b102c",
+                  border:"1px solid var(--line)",
+                  borderRadius:12,
+                  color:"var(--ink)",
+                  padding:12,
+                  fontFamily:"ui-monospace, SFMono-Regular, Menlo, Monaco"
+                }}
+              />
             </div>
 
             {judgement && (
