@@ -14,6 +14,7 @@ const css = `
 @media (max-width: 980px){ .mainGrid{ grid-template-columns: 1fr; } }
 
 /* controls */
+.controls{ display:grid; grid-template-columns:1fr auto; gap:12px; margin-top:12px; }
 .input{ padding:12px 14px; border-radius:10px; background:#ffffff14; border:1px solid #ffffff22; color:var(--ink); }
 .rounds{ width:80px; }
 .btns{ display:flex; gap:8px; margin-top:14px; flex-wrap:wrap; }
@@ -51,6 +52,7 @@ const css = `
 .fig3d__sheen{ position:absolute; inset:0; pointer-events:none; mix-blend-mode:screen; background:radial-gradient(120% 100% at 30% 0%,#ffffff12,transparent 55%); transform:translateZ(40px); }
 .pedestal{ position:absolute; left:50%; bottom:18px; translate:-50% 0; width:120px; height:12px; border-radius:999px;
   background:radial-gradient(120% 120% at 50% 30%,#000,#0a0f24); box-shadow:0 18px 30px #0009 inset,0 8px 30px #0008; transform:translateZ(10px); }
+.pedestal:before{ content:""; position:absolute; inset:-4px; border-radius:999px; background:radial-gradient(120% 120% at 50% 20%,currentColor,transparent 60%); filter:blur(10px); opacity:.55; }
 
 /* debug + dock */
 .debug{ position:sticky; top:0; z-index:40; margin-bottom:8px; padding:8px 12px; border-radius:10px; border:1px solid #ffffff22; background:#111827aa; backdrop-filter:blur(6px); font-size:12px; }
@@ -113,7 +115,7 @@ async function* startDebateStream(topic: string, rounds: number, onStatus?: (s:s
   }
 }
 
-/* ===================== TTS ===================== */
+/* ===================== TTS (singleton + chunked) ===================== */
 function getSharedAudio(): HTMLAudioElement {
   // @ts-ignore
   if (!window.__debateAudio) {
@@ -140,6 +142,7 @@ async function primeAutoplay() {
   } catch {}
 }
 
+// ~150 wpm ≈ 2.5 wps
 function getEstimatedSpeechSeconds(text: string) {
   const words = (text.match(/\b\w+\b/g) || []).length;
   return Math.max(8, Math.min(110, Math.round(words / 2.5)));
@@ -226,7 +229,7 @@ function FigurineCard({
       <div className="fig3d__img" style={{ position: "absolute", inset: 0 }}>
         <Image
           src={src}
-          alt={`${alt}`}
+          alt={alt}
           fill
           sizes="160px"
           style={{ objectFit: "contain" }}
@@ -239,7 +242,7 @@ function FigurineCard({
   );
 }
 
-/* ===================== Queue Monitor (admin helper) ===================== */
+/* ===================== Queue Monitor (admin) ===================== */
 function QueueMonitor({
   onPick,
   onStart,
@@ -290,22 +293,6 @@ function QueueMonitor({
     }
   }
 
-  async function removeItem(it: any) {
-    try {
-      setLoading(true);
-      const r = await fetch("/api/questions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "remove", id: it.id, text: getText(it) }),
-      });
-      if (!r.ok) throw new Error(await r.text());
-      await refresh();
-    } catch (e: any) {
-      setError(e?.message || "Remove failed");
-      setLoading(false);
-    }
-  }
-
   useEffect(() => {
     refresh();
     const id = setInterval(refresh, 3000);
@@ -337,7 +324,6 @@ function QueueMonitor({
                   Use + Start
                 </button>
               )}
-              <button className="btn secondary" onClick={() => removeItem(it)}>Remove</button>
             </div>
           </div>
         ))}
@@ -346,7 +332,7 @@ function QueueMonitor({
   );
 }
 
-/* ===================== Admin Page ===================== */
+/* ===================== Page ===================== */
 export default function AdminPanel(){
   const [topic, setTopic] = useState("Should we colonize Mars?");
   const [rounds, setRounds] = useState(3);
@@ -363,19 +349,23 @@ export default function AdminPanel(){
   const [dbgTTS, setDbgTTS] = useState("-");
   const [dbgErr, setDbgErr] = useState("-");
 
+  // Judge state
   const [judgement, setJudgement] = useState<JudgeResult | null>(null);
 
+  // Question Dock state
   const [queueCount, setQueueCount] = useState(0);
   const [qText, setQText] = useState("");
   const [qMsg, setQMsg] = useState<string | null>(null);
   const [autoRun, setAutoRun] = useState(false);
 
+  // countdown ticker
   useEffect(()=>{
     if (secondsLeft===null) return;
     const id = setInterval(()=> setSecondsLeft(s => (s===null? s : Math.max(0, s-1))), 1000);
     return ()=>clearInterval(id);
   },[secondsLeft]);
 
+  // poll queue size lightly
   useEffect(()=>{
     let stop = false;
     async function poll(){
@@ -390,6 +380,7 @@ export default function AdminPanel(){
     return ()=>{ stop = true; };
   },[]);
 
+  // Auto-run when idle
   useEffect(()=>{
     let tid: any;
     async function maybeAuto(){
@@ -433,11 +424,12 @@ export default function AdminPanel(){
       setQMsg("Added to queue!");
       setQText("");
       setQueueCount((c)=>c+1);
-    }catch{
+    }catch(e:any){
       setQMsg("Could not submit question.");
     }
   }
 
+  // --- Moderator judges & announces winner ---
   async function judgeAndAnnounce(finalTranscript: string) {
     try {
       const res = await fetch("/api/judge", {
@@ -469,13 +461,14 @@ export default function AdminPanel(){
 
   async function run(){
     if (running) return;
-    await primeAutoplay();
+    await primeAutoplay(); // Safari autoplay allowance
     setRunning(true);
     setJudgement(null);
     setLog([`[MOD] Debate start — Topic: ${topic}. — ${rounds} rounds.`]);
     setDbgStream("connecting"); setDbgErr("-"); setDbgTTS("-");
 
     try {
+      // 10s pre-roll
       setCurrent("MOD"); setTextMOD("Preparing debate…"); setSecondsLeft(10);
       await wait(10000); setSecondsLeft(null);
 
@@ -511,6 +504,7 @@ export default function AdminPanel(){
         }
       }
 
+      // After the stream ends, have MOD judge & announce the winner
       await judgeAndAnnounce(log.join("\n"));
 
     } catch (e:any) {
@@ -536,15 +530,15 @@ export default function AdminPanel(){
           <button className="btn secondary" onClick={()=>primeAutoplay()}>Prime Autoplay</button>
         </div>
 
-        <h1 style={{fontSize:28, fontWeight:900}}>$VS — Debate Arena (Admin)</h1>
-        <p style={{opacity:.85}}>Queue tools • moderation filter • random pick • auto-run • judging.</p>
+        <h1 style={{fontSize:28, fontWeight:900}}>$VS — Debate Arena</h1>
+        <p style={{opacity:.85}}>Audience questions • moderation filter • random queue • auto-run • judging.</p>
 
         <div className="mainGrid">
           {/* -------- Question Dock -------- */}
           <aside className="dock">
             <h3>Question Dock</h3>
             <small>Submit a motion/question to add to the queue. Unsafe content is auto-blocked.</small>
-            <div className="row" style={{display:"flex", gap:8, marginTop:10}}>
+            <div className="row">
               <input
                 className="input qinput"
                 value={qText}
@@ -556,7 +550,7 @@ export default function AdminPanel(){
             </div>
             {qMsg && <div className="muted">{qMsg}</div>}
 
-            <div className="row" style={{marginTop:10, display:"flex", gap:8}}>
+            <div className="row" style={{marginTop:10}}>
               <button
                 className="btn secondary"
                 onClick={async()=>{
@@ -614,9 +608,27 @@ export default function AdminPanel(){
             </div>
 
             <div className="grid">
-              <Podium label="PRO" color="var(--pro)" speaking={current==="PRO"} secondsLeft={current==="PRO"?secondsLeft:null} text={textPRO} />
-              <Podium label="MOD" color="var(--mod)" speaking={current==="MOD"} secondsLeft={current==="MOD"?secondsLeft:null} text={textMOD} />
-              <Podium label="CON" color="var(--con)" speaking={current==="CON"} secondsLeft={current==="CON}?secondsLeft:null} text={textCON} />
+              <Podium
+                label="PRO"
+                color="var(--pro)"
+                speaking={current === "PRO"}
+                secondsLeft={current === "PRO" ? secondsLeft : null}
+                text={textPRO}
+              />
+              <Podium
+                label="MOD"
+                color="var(--mod)"
+                speaking={current === "MOD"}
+                secondsLeft={current === "MOD" ? secondsLeft : null}
+                text={textMOD}
+              />
+              <Podium
+                label="CON"
+                color="var(--con)"
+                speaking={current === "CON"}
+                secondsLeft={current === "CON" ? secondsLeft : null}
+                text={textCON}
+              />
             </div>
 
             <div style={{marginTop:22}}>
