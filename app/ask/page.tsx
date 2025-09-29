@@ -1,13 +1,7 @@
 "use client";
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
-/**
- * Ask the Arena — party tail 20s + real onended gating
- * - PRO/CON: +20,000ms tail after actual audio end
- * - MOD: 2,000ms tail, first-word cushion still applied
- * - Uses Web Audio + serialized speakChain (no overlap, no echo)
- */
-
+/* ================= Styling ================= */
 const css = `
 :root{
   --bg1:#0b102c; --bg2:#0f172a; --line:#1d2447; --ink:#e5e7eb;
@@ -34,74 +28,41 @@ const css = `
 
 /* Stage */
 .stage{ margin:28px auto 0; max-width:1200px; }
-.grid{
-  display:grid;
-  grid-template-columns: repeat(3, minmax(280px, 1fr));
-  gap:28px;
-  align-items:start;
-  justify-items:center;
-}
+.grid{ display:grid; grid-template-columns: repeat(3, minmax(280px, 1fr)); gap:28px; align-items:start; justify-items:center; }
 @media (max-width: 1100px){ .grid{ grid-template-columns:1fr; } }
 
 /* Card */
-.card{
-  position:relative;
-  width:100%;
-  max-width: 440px;
-  border:1px solid var(--line);
-  border-radius:18px;
-  background:linear-gradient(#0c1635,#0b102c);
-  box-shadow: 0 10px 30px #0006 inset;
-  padding:16px 16px 18px;
-}
-.badge{
-  position:absolute; top:-12px; left:14px;
-  font-weight:900; letter-spacing:.6px; font-size:12px; text-transform:uppercase;
-  background:#0b102c; border:1px solid #ffffff22; color:#e5e7eb;
-  padding:7px 10px; border-radius:10px; display:inline-flex; gap:8px; align-items:center;
-}
+.card{ position:relative; width:100%; max-width: 440px; border:1px solid var(--line);
+  border-radius:18px; background:linear-gradient(#0c1635,#0b102c); box-shadow: 0 10px 30px #0006 inset; padding:16px 16px 18px; }
+.badge{ position:absolute; top:-12px; left:14px; font-weight:900; letter-spacing:.6px; font-size:12px; text-transform:uppercase;
+  background:#0b102c; border:1px solid #ffffff22; color:#e5e7eb; padding:7px 10px; border-radius:10px; display:inline-flex; gap:8px; align-items:center; }
 .dot{ width:10px; height:10px; border-radius:50%; background:#64748b; }
 .card.speaking .dot{ background:currentColor; }
 
-/* Vertical stack per card */
+/* Avatar + balloon */
 .stack{ display:flex; flex-direction:column; align-items:center; gap:14px; width:100%; }
-
-/* Avatar */
-.figure{
-  width:var(--avatar); height:var(--avatar);
-  min-width:var(--avatar); min-height:var(--avatar);
-  border-radius:20px; border:1px solid #1d274f;
-  background:linear-gradient(180deg,#111936,#0b102c 70%);
-  display:grid; place-items:center; overflow:hidden;
-  box-shadow:0 12px 28px #0007, inset 0 1px 0 #ffffff10;
-}
+.figure{ width:var(--avatar); height:var(--avatar); min-width:var(--avatar); min-height:var(--avatar);
+  border-radius:20px; border:1px solid #1d274f; background:linear-gradient(180deg,#111936,#0b102c 70%);
+  display:grid; place-items:center; overflow:hidden; box-shadow:0 12px 28px #0007, inset 0 1px 0 #ffffff10; }
 .figure img{ display:block; width:100%; height:100%; object-fit:contain; filter:drop-shadow(0 12px 16px #0006); }
 
-/* Balloon */
-.balloon{
-  position:relative; width:100%;
-  color:#dbe3f5; line-height:1.65; font-size:17px; min-height:74px;
+.balloon{ position:relative; width:100%; color:#dbe3f5; line-height:1.65; font-size:17px; min-height:74px;
   background:#0b102c; border:2px solid currentColor; border-radius:18px; padding:16px 18px;
-  box-shadow: 0 8px 20px #0007, inset 0 1px 0 #ffffff08;
-}
-.balloon.tail-up:before{
-  content:""; position:absolute; left:50%; top:0; transform:translate(-50%, -100%);
+  box-shadow: 0 8px 20px #0007, inset 0 1px 0 #ffffff08; }
+.balloon.tail-up:before{ content:""; position:absolute; left:50%; top:0; transform:translate(-50%, -100%);
   width:0; height:0; border:12px solid transparent; border-bottom-color: currentColor;
-  filter:drop-shadow(0 2px 1px rgba(0,0,0,.3));
-}
+  filter:drop-shadow(0 2px 1px rgba(0,0,0,.3)); }
 
 /* Backdrop */
 .backdrop{ position:absolute; inset:0; pointer-events:none; z-index:0; }
 .lights{ position:absolute; inset:0;
-  background:
-    radial-gradient(900px 520px at 18% -8%, rgba(99,102,241,0.28), transparent 60%),
-    radial-gradient(900px 520px at 82% -8%, rgba(16,185,129,0.28), transparent 60%),
-    radial-gradient(700px 380px at 50% -10%, rgba(255,255,255,0.10), transparent 60%);
+  background: radial-gradient(900px 520px at 18% -8%, rgba(99,102,241,0.28), transparent 60%),
+              radial-gradient(900px 520px at 82% -8%, rgba(16,185,129,0.28), transparent 60%),
+              radial-gradient(700px 380px at 50% -10%, rgba(255,255,255,0.10), transparent 60%);
   mix-blend-mode:screen; }
 .audience{ position:absolute; left:0; right:0; bottom:0; height:34vh;
   background:radial-gradient(120% 80% at 50% 120%, rgba(8,12,28,0.95), rgba(8,12,28,0.80) 40%, transparent 62%),
-             linear-gradient(to top, rgba(2,6,23,0.96) 0%, rgba(2,6,23,0.88) 52%, rgba(2,6,23,0.0) 100%);
-}
+             linear-gradient(to top, rgba(2,6,23,0.96) 0%, rgba(2,6,23,0.88) 52%, rgba(2,6,23,0.0) 100%); }
 `;
 
 /* ================= Types ================= */
@@ -112,7 +73,7 @@ type StreamEvent =
   | { type: "turn"; side: Speaker; text: string }
   | { type: "error"; message: string };
 
-/* ================= NDJSON ================= */
+/* ================= NDJSON from /api/debate ================= */
 async function* startDebateStream(topic: string, rounds: number) {
   const res = await fetch("/api/debate", {
     method: "POST",
@@ -137,7 +98,7 @@ async function* startDebateStream(topic: string, rounds: number) {
   }
 }
 
-/* ================= Web Audio ================= */
+/* ================= Web Audio + TTS ================= */
 let __ctx: AudioContext | null = null;
 let __gain: GainNode | null = null;
 function getCtx(): AudioContext {
@@ -154,14 +115,13 @@ async function resumeCtx() {
   if (ctx.state !== "running") { try { await ctx.resume(); } catch {} }
 }
 
-/* ================= TTS Prefetch (AudioBuffer) ================= */
 type Clip = { buffer: AudioBuffer; durationMs: number };
 
-const HARD_MAX_MS = 150_000;        // plenty for 90s + long tail
-const EXTRA_BUFFER_MS_MOD = 2000;   // 2s after mod
-const EXTRA_BUFFER_MS_PARTY = 20000; // **20s** after pro/con
-const SCHEDULE_LEAD_S = 0.05;       // tiny scheduling lead
-const FIRST_MOD_CUSHION_S = 0.12;   // prevent first-word clip
+const HARD_MAX_MS = 150_000;
+const EXTRA_BUFFER_MS_MOD = 2000;
+const EXTRA_BUFFER_MS_PARTY = 20000;
+const SCHEDULE_LEAD_S = 0.05;
+const FIRST_MOD_CUSHION_S = 0.12;
 
 function estimateMs(text: string) {
   const words = (text.match(/\b\w+\b/g) || []).length;
@@ -191,12 +151,10 @@ async function prefetchWithFallback(text: string, voices: string[]): Promise<Cli
   return null;
 }
 
-/* Text utils */
 function stripModeratorPrefix(s: string) {
   return s.replace(/^\s*(?:moderator|mod)\s*[:\-–—]\s*/i, "");
 }
 
-/* ================= Playback (onended + tail) ================= */
 let speakChain: Promise<void> = Promise.resolve();
 
 function schedulePlay(
@@ -212,46 +170,32 @@ function schedulePlay(
     const ctx = getCtx();
     const src = ctx.createBufferSource();
     src.buffer = clip.buffer;
-
-    // route via master gain
     src.connect(__gain!);
 
     const extraFirstMod = (who === "MOD" && !firstModPlayedRef.current) ? FIRST_MOD_CUSHION_S : 0;
     const startAt = ctx.currentTime + SCHEDULE_LEAD_S + extraFirstMod;
 
-    // reveal transcript right as audio is starting
     const msUntilStart = Math.max(0, (startAt - ctx.currentTime) * 1000);
     setTimeout(() => { setSpeaking(who); setText(displayText); }, msUntilStart);
 
-    // start scheduled
     src.start(startAt);
 
-    // prefer real audio end + tail; also keep a fallback timer in case onended never fires
     const tailMs = (who === "MOD") ? EXTRA_BUFFER_MS_MOD : EXTRA_BUFFER_MS_PARTY;
     let finished = false;
-
     const cleanResolve = () => {
       if (finished) return;
       finished = true;
       setSpeaking(null);
       resolve();
     };
-
-    // onended fires when buffer actually finishes (no guesswork)
-    src.onended = () => {
-      // wait extra tail before allowing next speaker
-      setTimeout(cleanResolve, tailMs);
-    };
-
-    // Fallback guard: if onended somehow doesn’t hit, resolve after scheduled duration + tail.
-    const fallbackTotalMs = msUntilStart + clip.durationMs + tailMs + 500; // +500ms safety
+    src.onended = () => { setTimeout(cleanResolve, tailMs); };
+    const fallbackTotalMs = msUntilStart + clip.durationMs + tailMs + 500;
     setTimeout(cleanResolve, fallbackTotalMs);
 
     if (who === "MOD") firstModPlayedRef.current = true;
   });
 }
 
-/* Voices (male-ish, distinct) */
 const MOD_VOICES = ["harry", "daniel", "brian", "alloy"];
 const PRO_VOICES = ["charlie", "alloy", "sage"];
 const CON_VOICES = ["nathan", "mason", "alloy", "sage"];
@@ -289,31 +233,35 @@ export default function AskPage(){
     return () => clearInterval(id);
   }, []);
 
-  // poll queue; consume when idle so count drops
+  // poll queue; when idle, try to pick → start debate
   useEffect(() => {
     let stop = false;
     async function poll(){
       try{
         if (!running) {
-          const rPick = await fetch("/api/questions", {
-            method:"POST", headers:{ "Content-Type":"application/json" },
-            body: JSON.stringify({ action:"pick" }),
+          // attempt atomic pick
+          const rPick = await fetch("/api/arena-queue", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "pick" }),
           });
           if (rPick.ok) {
             const j = await rPick.json(); // { picked, remaining }
             if (j?.picked) {
               setTopic(j.picked);
               if (typeof j.remaining === "number") setQueueCount(j.remaining);
-              setTimeout(()=>run(j.picked as string), 120);
+              setTimeout(()=>run(j.picked as string), 150);
             } else {
-              const rList = await fetch("/api/questions", { cache:"no-store" });
+              // nothing picked → just refresh size
+              const rList = await fetch("/api/arena-queue", { cache:"no-store" });
               const jj = rList.ok ? await rList.json() : null;
               const items = (jj?.items||[]) as any[];
               if (!stop) setQueueCount(items.length||0);
             }
           }
         } else {
-          const rList = await fetch("/api/questions", { cache:"no-store" });
+          // while running, keep size updated
+          const rList = await fetch("/api/arena-queue", { cache:"no-store" });
           const jj = rList.ok ? await rList.json() : null;
           const items = (jj?.items||[]) as any[];
           if (!stop) setQueueCount(items.length||0);
@@ -335,17 +283,17 @@ export default function AskPage(){
     if (text.length > 180) { setErr("Please keep questions ≤ 180 characters."); return; }
     if (Date.now() < cooldownUntil) return;
     try{
-      const r = await fetch("/api/questions", {
+      const r = await fetch("/api/arena-queue", {
         method:"POST", headers:{ "Content-Type":"application/json" },
         body: JSON.stringify({ text }),
       });
       if (!r.ok) throw new Error(await r.text());
-      await r.json();
+      const data = await r.json();
       setMsg("Added to the queue. Thanks!"); setQ("");
       const until = Date.now()+30000;
       localStorage.setItem("ask.cooldownUntil", String(until));
       setCooldownUntil(until);
-      setQueueCount(c => (c==null ? 1 : c+1));
+      setQueueCount((c)=> (typeof data?.size==="number" ? data.size : (c==null?1:c+1)));
     }catch{
       setMsg("Added locally (server busy)"); setQ("");
     }
@@ -363,7 +311,6 @@ export default function AskPage(){
     speakChain = speakChain.then(async () => {
       const clip = await clipP;
       if (!clip) {
-        // fallback pacing if TTS fails
         const ms = estimateMs(rawText);
         const tail = (who === "MOD") ? EXTRA_BUFFER_MS_MOD : EXTRA_BUFFER_MS_PARTY;
         setSpeaking(who); setText(displayText);
@@ -435,6 +382,7 @@ export default function AskPage(){
           {err && <div className="err">⚠️ {err}</div>}
         </form>
 
+        {/* Stage */}
         <div className="stage">
           <div className="grid">
             <div className={`card ${speaking==="PRO"?"speaking":""}`} style={{ color:"var(--pro)" } as React.CSSProperties}>
